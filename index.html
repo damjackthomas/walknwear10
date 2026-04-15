@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>WEARNWALK - Inventory & Sales Tracker</title>
   <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.twilio.com/libs/twilio/8.13.0/twilio.min.js"></script>
+<script src="notificationService.js"></script>
 </head>
 <body>
   <header class="hero">
@@ -41,6 +43,9 @@
 
     <section id="shop-section" class="card admin-only">
       <h2>Shop Personalization</h2>
+      <div class="admin-actions">
+        <button type="button" id="clear-inventory" class="secondary">Clear All Inventory</button>
+      </div>
       <form id="shop-form">
         <div class="grid">
           <label>
@@ -109,6 +114,25 @@
           <button type="button" id="clear-form" class="secondary">Clear</button>
         </div>
       </form>
+      
+      <div class="excel-import-section">
+        <h3>Import Products from Excel</h3>
+        <div class="excel-upload-area">
+          <label for="excel-file" class="file-upload-label">
+            <span class="upload-icon">+ Upload Excel File</span>
+            <input type="file" id="excel-file" accept=".xlsx,.xls,.csv" style="display: none;" />
+          </label>
+          <div id="file-info" class="file-info" style="display: none;">
+            <span id="file-name"></span>
+            <button type="button" id="remove-file" class="secondary">Remove</button>
+          </div>
+        </div>
+        <div class="excel-actions">
+          <button type="button" id="download-template" class="secondary">Download Excel Template</button>
+          <button type="button" id="import-excel" class="primary" disabled>Import Products</button>
+        </div>
+        <div id="import-status" class="import-status"></div>
+      </div>
     </section>
 
     <section class="card">
@@ -138,7 +162,7 @@
         <div class="grid">
           <label>
             Customer Name
-            <input id="customer-name" type="text" value="Walk-in" placeholder="Walk-in (auto)" />
+            <input id="customer-name" type="text" placeholder="Enter customer name" />
           </label>
           <label>
             Customer Phone Number
@@ -151,8 +175,28 @@
               <option value="UPI">UPI</option>
               <option value="Card">Card</option>
               <option value="Other">Other</option>
+              <option value="Split">Split Payment (Cash + Online)</option>
             </select>
           </label>
+          <div class="split-payment-fields" id="split-payment-fields" style="display: none;">
+            <div class="grid">
+              <label>
+                Cash Amount (Rs)
+                <input type="number" id="cash-amount" min="0" step="0.01" placeholder="0.00" />
+              </label>
+              <label>
+                Online Amount (Rs)
+                <input type="number" id="online-amount" min="0" step="0.01" placeholder="0.00" />
+              </label>
+            </div>
+            <div class="split-payment-validation" id="split-validation" style="color: #d32f2f; font-size: 14px; margin-top: 5px;"></div>
+          </div>
+          <div class="sms-option" id="sms-option-container" style="display: none;">
+            <label class="checkbox-label">
+              <input type="checkbox" id="send-sms-checkbox" />
+              <span>Send bill to customer phone via SMS</span>
+            </label>
+          </div>
         </div>
         <div id="sale-items"></div>
         <div class="actions">
@@ -175,6 +219,7 @@
               <th>Size</th>
               <th>Qty</th>
               <th>Total</th>
+              <th>Payment</th>
               <th class="admin-only">Actions</th>
             </tr>
           </thead>

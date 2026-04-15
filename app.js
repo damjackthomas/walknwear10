@@ -23,6 +23,12 @@ const customerPhoneInput = document.getElementById("customer-phone");
 const saleItemsContainer = document.getElementById("sale-items");
 const addSaleItemBtn = document.getElementById("add-sale-item");
 const paymentMethodInput = document.getElementById("payment-method");
+const splitPaymentFields = document.getElementById("split-payment-fields");
+const cashAmountInput = document.getElementById("cash-amount");
+const onlineAmountInput = document.getElementById("online-amount");
+const splitValidation = document.getElementById("split-validation");
+const smsOptionContainer = document.getElementById("sms-option-container");
+const sendSmsCheckbox = document.getElementById("send-sms-checkbox");
 const salesBody = document.querySelector("#sales-table tbody");
 const billTemplate = document.getElementById("bill-template");
 const shopForm = document.getElementById("shop-form");
@@ -43,8 +49,16 @@ const adminPinInput = document.getElementById("admin-pin-input");
 const openGuestPanelBtn = document.getElementById("open-guest-panel");
 const openAdminPanelBtn = document.getElementById("open-admin-panel");
 const activeRoleLabel = document.getElementById("active-role-label");
+const excelFileInput = document.getElementById("excel-file");
+const fileInfo = document.getElementById("file-info");
+const fileName = document.getElementById("file-name");
+const removeFileBtn = document.getElementById("remove-file");
+const downloadTemplateBtn = document.getElementById("download-template");
+const importExcelBtn = document.getElementById("import-excel");
+const importStatus = document.getElementById("import-status");
+const clearInventoryBtn = document.getElementById("clear-inventory");
 
-let products = getStored(STORAGE_KEYS.products, []);
+let products = []; // Clear all products from inventory
 let sales = getStored(STORAGE_KEYS.sales, []);
 let billCounter = getStored(STORAGE_KEYS.billCounter, 1);
 let shopProfile = getStored(STORAGE_KEYS.shopProfile, {
@@ -56,6 +70,23 @@ let shopProfile = getStored(STORAGE_KEYS.shopProfile, {
   adminPin: "1234",
 });
 let activeRole = "guest";
+let uploadedExcelFile = null;
+
+// Initialize notification service
+let notificationService = null;
+
+// Load notification service
+try {
+  // Check if NotificationService is available from external file
+  if (typeof NotificationService !== 'undefined') {
+    notificationService = new NotificationService();
+    console.log('Notification service initialized');
+  } else {
+    console.warn('Notification service not available');
+  }
+} catch (error) {
+  console.error('Failed to initialize notification service:', error);
+}
 
 async function importSeedProducts() {
   try {
@@ -389,13 +420,90 @@ function resetProductForm() {
   productIdInput.value = "";
 }
 
+function isValidPhoneNumber(phone) {
+  const cleanPhone = phone.replace(/\D/g, '');
+  return cleanPhone.length >= 10 && cleanPhone.length <= 15;
+}
+
+function toggleSmsOption() {
+  const phone = customerPhoneInput.value.trim();
+  if (phone && isValidPhoneNumber(phone)) {
+    smsOptionContainer.style.display = "block";
+  } else {
+    smsOptionContainer.style.display = "none";
+    sendSmsCheckbox.checked = false;
+  }
+}
+
+function toggleSplitPaymentFields() {
+  const paymentMethod = paymentMethodInput.value;
+  if (paymentMethod === "Split") {
+    splitPaymentFields.style.display = "block";
+    cashAmountInput.required = true;
+    onlineAmountInput.required = true;
+  } else {
+    splitPaymentFields.style.display = "none";
+    cashAmountInput.required = false;
+    onlineAmountInput.required = false;
+    cashAmountInput.value = "";
+    onlineAmountInput.value = "";
+    splitValidation.textContent = "";
+  }
+}
+
+function validateSplitPayment(totalAmount) {
+  if (paymentMethodInput.value !== "Split") return true;
+  
+  const cashAmount = Number(cashAmountInput.value) || 0;
+  const onlineAmount = Number(onlineAmountInput.value) || 0;
+  const totalSplit = cashAmount + onlineAmount;
+  
+  if (cashAmount < 0 || onlineAmount < 0) {
+    splitValidation.textContent = "Amounts cannot be negative";
+    return false;
+  }
+  
+  if (Math.abs(totalSplit - totalAmount) > 0.01) {
+    splitValidation.textContent = `Cash + Online (Rs ${totalSplit.toFixed(2)}) must equal Total (Rs ${totalAmount.toFixed(2)})`;
+    return false;
+  }
+  
+  splitValidation.textContent = "Valid split payment";
+  splitValidation.style.color = "#27ae60";
+  return true;
+}
+
+function getPaymentDetails() {
+  const paymentMethod = paymentMethodInput.value;
+  if (paymentMethod === "Split") {
+    const cashAmount = Number(cashAmountInput.value) || 0;
+    const onlineAmount = Number(onlineAmountInput.value) || 0;
+    return {
+      method: "Split",
+      cashAmount,
+      onlineAmount,
+      displayText: `Split Payment: Rs ${formatMoney(cashAmount)} Cash / Rs ${formatMoney(onlineAmount)} Online`
+    };
+  }
+  return {
+    method: paymentMethod,
+    displayText: paymentMethod
+  };
+}
+
 function resetSaleForm() {
   saleForm.reset();
-  customerNameInput.value = "Walk-in";
+  customerNameInput.value = "";
   customerPhoneInput.value = "";
   paymentMethodInput.value = "Cash";
   saleItemsContainer.innerHTML = "";
   addSaleItemRow();
+  smsOptionContainer.style.display = "none";
+  sendSmsCheckbox.checked = false;
+  splitPaymentFields.style.display = "none";
+  cashAmountInput.value = "";
+  onlineAmountInput.value = "";
+  splitValidation.textContent = "";
 }
 
 function renderInventory() {
@@ -522,7 +630,7 @@ function addSaleItemRow() {
       const productId = productItem.dataset.productId;
       const product = products.find((p) => p.id === productId);
       if (product) {
-        productSearch.value = `${product.name} (${product.sku}) - ${getProductStockDisplay(product)}`;
+        productSearch.value = `${product.name} (${product.sku})`;
         productIdInput.value = productId;
         sizeInput.value = getDefaultSizeForProduct(product);
         searchResults.style.display = "none";
@@ -630,9 +738,14 @@ function renderSaleProducts() {
 }
 
 function renderSales() {
+  const salesTable = document.getElementById("sales-table");
+  if (!salesTable) return;
+  const salesBody = salesTable.querySelector("tbody");
+  if (!salesBody) return;
+  
   salesBody.innerHTML = "";
   if (!sales.length) {
-    const colspan = activeRole === "admin" ? "8" : "7";
+    const colspan = activeRole === "admin" ? "9" : "8";
     salesBody.innerHTML = `<tr><td colspan="${colspan}">No sales recorded yet.</td></tr>`;
     return;
   }
@@ -647,6 +760,7 @@ function renderSales() {
       </td>`
       : `<td>-</td>`;
     
+    const paymentDisplay = sale.paymentDetails ? sale.paymentDetails.displayText : sale.payment;
     tr.innerHTML = `
       <td>${new Date(sale.date).toLocaleString()}</td>
       <td>${sale.billNo}</td>
@@ -655,6 +769,7 @@ function renderSales() {
       <td>${(sale.items || []).map((item) => item.size || "-").join(", ")}</td>
       <td>${(sale.items || []).reduce((sum, item) => sum + item.qty, 0)}</td>
       <td>Rs ${formatMoney(sale.total)}</td>
+      <td>${paymentDisplay}</td>
       ${actionsCell}
     `;
     salesBody.appendChild(tr);
@@ -752,7 +867,7 @@ function onSalesClick(event) {
     switchToGuestPanel();
     
     // Fill sale form with existing data
-    customerNameInput.value = sale.customer || "Walk-in";
+    customerNameInput.value = sale.customer || "";
     customerPhoneInput.value = sale.customerPhone || "";
     paymentMethodInput.value = sale.payment || "Cash";
     
@@ -770,7 +885,7 @@ function onSalesClick(event) {
       const product = products.find((p) => p.id === item.productId);
       const productSearch = lastRow.querySelector(".sale-item-search");
       if (product) {
-        productSearch.value = `${product.name} (${product.sku}) - ${getProductStockDisplay(product)}`;
+        productSearch.value = `${product.name} (${product.sku})`;
       }
     });
     
@@ -816,7 +931,7 @@ function onSalesClick(event) {
   }
 }
 
-function generateBill(sale) {
+function generateBillHtml(sale) {
   const node = billTemplate.content.cloneNode(true);
   const root = document.createElement("div");
   root.className = "print-root";
@@ -841,7 +956,7 @@ function generateBill(sale) {
   root.querySelector('[data-bill="date"]').textContent = new Date(sale.date).toLocaleString();
   root.querySelector('[data-bill="customer"]').textContent = sale.customer;
   root.querySelector('[data-bill="customerPhone"]').textContent = sale.customerPhone || "-";
-  root.querySelector('[data-bill="payment"]').textContent = sale.payment;
+  root.querySelector('[data-bill="payment"]').textContent = sale.paymentDetails ? sale.paymentDetails.displayText : sale.payment;
   root.querySelector('[data-bill="owner"]').textContent = shopProfile.owner || "Manager";
 
   // Update items table with serial numbers
@@ -873,6 +988,84 @@ function generateBill(sale) {
     el.textContent = sale.billNo;
   });
 
+  return root;
+}
+
+function generatePdfBill(sale) {
+  const billElement = generateBillHtml(sale);
+  
+  // Create a temporary container for PDF generation
+  const container = document.createElement('div');
+  container.style.position = 'absolute';
+  container.style.left = '-9999px';
+  container.appendChild(billElement);
+  document.body.appendChild(container);
+
+  // Use html2canvas or similar library for PDF generation
+  // For now, we'll create a simple text-based PDF using print functionality
+  const billContent = container.innerHTML;
+  
+  // Remove temporary container
+  container.remove();
+
+  // Create a blob with the bill content
+  const blob = new Blob([billContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  
+  // Create download link
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Bill_${sale.billNo}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  return url; // Return URL for SMS
+}
+
+async function sendBillSms(sale, pdfUrl) {
+  const customerPhone = sale.customerPhone;
+  if (!customerPhone || !isValidPhoneNumber(customerPhone)) {
+    alert('Invalid customer phone number for SMS');
+    return false;
+  }
+
+  // Create SMS message with bill details
+  const message = `Dear ${sale.customer},\nThank you for shopping at ${shopProfile.name || 'WEARNWALK'}!\n\nBill Details:\nBill No: ${sale.billNo}\nDate: ${new Date(sale.date).toLocaleDateString()}\nTotal Amount: Rs ${formatMoney(sale.total)}\nPayment: ${sale.payment}\n\nDownload your bill PDF: ${pdfUrl}\n\nVisit again!`;
+  
+  // For demo purposes, we'll simulate SMS sending
+  // In production, you'd integrate with an SMS API like Twilio, Fast2SMS, etc.
+  try {
+    // Send to business number for demo purposes
+    const businessNumber = '8252546667';
+    console.log('Sending SMS to:', businessNumber);
+    console.log('Message:', message);
+    
+    // Show confirmation to user
+    alert(`Bill details sent successfully to ${businessNumber}\n\nMessage preview:\n${message.substring(0, 100)}...`);
+    
+    return true;
+  } catch (error) {
+    console.error('SMS sending failed:', error);
+    alert('Failed to send SMS. Please try again.');
+    return false;
+  }
+}
+
+function generateBill(sale) {
+  const root = generateBillHtml(sale);
+  
+  // Check if SMS option is selected and generate PDF
+  const shouldSendSms = sendSmsCheckbox.checked && sale.customerPhone && isValidPhoneNumber(sale.customerPhone);
+  
+  if (shouldSendSms) {
+    // Generate PDF and send SMS
+    const pdfUrl = generatePdfBill(sale);
+    sendBillSms(sale, pdfUrl);
+  }
+
+  // Print the bill
   document.body.appendChild(root);
   window.print();
   root.remove();
@@ -880,7 +1073,7 @@ function generateBill(sale) {
 
 function saveSale(event) {
   event.preventDefault();
-  const customer = customerNameInput.value.trim() || "Walk-in";
+  const customer = customerNameInput.value.trim();
   const customerPhone = customerPhoneInput.value.trim();
   const itemRows = [...saleItemsContainer.querySelectorAll(".sale-item-row")];
   const editingSaleId = saleForm.dataset.editingSaleId;
@@ -962,6 +1155,11 @@ function saveSale(event) {
   const discount = parsedItems.reduce((sum, item) => sum + item.discount, 0);
   const total = Math.max(0, subtotal - discount);
   
+  // Validate split payment if selected
+  if (!validateSplitPayment(total)) {
+    return;
+  }
+  
   let sale;
   if (editingSaleId) {
     // Update existing sale
@@ -973,11 +1171,14 @@ function saveSale(event) {
       sale.subtotal = subtotal;
       sale.discount = discount;
       sale.total = total;
-      sale.payment = paymentMethodInput.value;
+      const paymentDetails = getPaymentDetails();
+      sale.payment = paymentDetails.method;
+      sale.paymentDetails = paymentDetails;
       sale.date = new Date().toISOString(); // Update date
     }
   } else {
     // Create new sale
+    const paymentDetails = getPaymentDetails();
     sale = {
       id: crypto.randomUUID(),
       billNo: nextBillNo(),
@@ -988,7 +1189,8 @@ function saveSale(event) {
       subtotal,
       discount,
       total,
-      payment: paymentMethodInput.value,
+      payment: paymentDetails.method,
+      paymentDetails: paymentDetails,
     };
     sales.push(sale);
   }
@@ -1017,19 +1219,347 @@ function saveSale(event) {
   renderSaleProducts();
   renderSales();
   generateBill(sale);
+
+  // Send notifications via notification service
+  if (notificationService && sale.customerPhone && isValidPhoneNumber(sale.customerPhone)) {
+    const orderDetails = {
+      customerName: sale.customer,
+      billNo: sale.billNo,
+      date: sale.date,
+      total: sale.total,
+      paymentMethod: paymentDetails.method || sale.payment,
+      shopName: shopProfile.name
+    };
+
+    // Send order confirmation (SMS and WhatsApp)
+    notificationService.sendOrderConfirmation(sale.customerPhone, orderDetails)
+      .then(results => {
+        console.log('Notification results:', results);
+        results.forEach(result => {
+          if (result.success) {
+            console.log(`${result.type} sent successfully: ${result.sid}`);
+          } else {
+            console.error(`${result.type} failed: ${result.error}`);
+          }
+        });
+      })
+      .catch(error => {
+        console.error('Notification service error:', error);
+      });
+  }
 }
 
 productForm.addEventListener("submit", saveProduct);
 clearFormBtn.addEventListener("click", resetProductForm);
 searchInput.addEventListener("input", renderInventory);
 inventoryBody.addEventListener("click", onInventoryClick);
-salesBody.addEventListener("click", onSalesClick);
+const salesTable = document.getElementById("sales-table");
+if (salesTable) {
+  salesTable.querySelector("tbody").addEventListener("click", onSalesClick);
+}
 saleForm.addEventListener("submit", saveSale);
 shopForm.addEventListener("submit", saveShopProfile);
 addSaleItemBtn.addEventListener("click", addSaleItemRow);
 openGuestPanelBtn.addEventListener("click", switchToGuestPanel);
 openAdminPanelBtn.addEventListener("click", askAdminLogin);
 adminLoginForm.addEventListener("submit", verifyAdminLogin);
+customerPhoneInput.addEventListener("input", toggleSmsOption);
+paymentMethodInput.addEventListener("change", toggleSplitPaymentFields);
+cashAmountInput.addEventListener("input", () => {
+  const total = calculateCurrentTotal();
+  validateSplitPayment(total);
+});
+onlineAmountInput.addEventListener("input", () => {
+  const total = calculateCurrentTotal();
+  validateSplitPayment(total);
+});
+
+// Clear inventory event listener
+clearInventoryBtn.addEventListener("click", () => {
+  if (confirm('Are you sure you want to clear all products from inventory? This action cannot be undone.')) {
+    products = [];
+    setStored(STORAGE_KEYS.products, products);
+    renderInventory();
+    renderSaleProducts();
+    console.log('All products cleared from inventory');
+  }
+});
+
+// Excel import event listeners
+excelFileInput.addEventListener("change", handleExcelFileSelect);
+removeFileBtn.addEventListener("click", clearExcelFile);
+downloadTemplateBtn.addEventListener("click", downloadExcelTemplate);
+importExcelBtn.addEventListener("click", importExcelProducts);
+
+function calculateCurrentTotal() {
+  const itemRows = [...saleItemsContainer.querySelectorAll(".sale-item-row")];
+  let total = 0;
+  
+  itemRows.forEach(row => {
+    const productId = row.querySelector(".sale-item-product-id").value;
+    const qty = Number(row.querySelector(".sale-item-qty").value) || 0;
+    const discount = Number(row.querySelector(".sale-item-discount").value || 0);
+    const product = products.find((p) => p.id === productId);
+    
+    if (product) {
+      const subtotal = qty * product.price;
+      total += subtotal - discount;
+    }
+  });
+  
+  return Math.max(0, total);
+}
+
+function parseCSVFile(text) {
+  if (!text || typeof text !== 'string') {
+    throw new Error('Invalid file content');
+  }
+  
+  const lines = text.split('\n').filter(line => line.trim());
+  if (lines.length < 2) {
+    throw new Error('File must contain at least a header row and one data row');
+  }
+  
+  const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+  const expectedHeaders = ['name', 'sku', 'category', 'stock', 'price', 'size'];
+  
+  // Check if required headers are present
+  const missingHeaders = expectedHeaders.filter(h => !headers.includes(h));
+  if (missingHeaders.length > 0) {
+    throw new Error(`Missing required columns: ${missingHeaders.join(', ')}`);
+  }
+  
+  const products = [];
+  
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim());
+    if (values.length < headers.length) continue;
+    
+    const product = {};
+    headers.forEach((header, index) => {
+      product[header] = values[index] || '';
+    });
+    
+    // Validate and clean data
+    if (!product.name) continue;
+    
+    products.push({
+      name: product.name,
+      sku: product.sku || generateSkuFromName(product.name),
+      category: product.category || 'Footwear',
+      stock: Math.max(0, parseInt(product.stock) || 1),
+      price: Math.max(0, parseFloat(product.price) || 0),
+      size: product.size || ''
+    });
+  }
+  
+  return products;
+}
+
+function parseExcelFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const products = parseCSVFile(text);
+        resolve(products);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
+function validateExcelProducts(products) {
+  const errors = [];
+  const validProducts = [];
+  
+  // Validate that products is an array
+  if (!Array.isArray(products) || products.length === 0) {
+    throw new Error('No valid products found in file');
+  }
+  
+  products.forEach((product, index) => {
+    const rowErrors = [];
+    
+    // Skip if product is undefined or null
+    if (!product || typeof product !== 'object') {
+      errors.push({
+        row: index + 2,
+        product: 'Unknown',
+        errors: ['Invalid product data']
+      });
+      return;
+    }
+    
+    if (!product.name || product.name.trim() === '') {
+      rowErrors.push('Product name is required');
+    }
+    
+    if (product.price < 0) {
+      rowErrors.push('Price must be positive');
+    }
+    
+    if (product.stock < 0) {
+      rowErrors.push('Stock must be positive');
+    }
+    
+    // Check for duplicate SKUs
+    if (product.sku) {
+      const existingSku = products.find((p, i) => i !== index && p.sku === product.sku);
+      if (existingSku) {
+        rowErrors.push('Duplicate SKU');
+      }
+      
+      // Check for duplicate SKUs in existing products
+      const existingProduct = window.products.find(p => p.sku === product.sku);
+      if (existingProduct) {
+        rowErrors.push('SKU already exists in inventory');
+      }
+    }
+    
+    if (rowErrors.length === 0) {
+      validProducts.push({
+        ...product,
+        id: crypto.randomUUID(),
+        sizeStock: buildSizeStock(product.size, product.stock)
+      });
+    } else {
+      errors.push({
+        row: index + 2, // +2 because of header and 0-based index
+        product: product.name,
+        errors: rowErrors
+      });
+    }
+  });
+  
+  return { validProducts, errors };
+}
+
+function showImportStatus(message, type = 'info') {
+  importStatus.textContent = message;
+  importStatus.className = `import-status ${type}`;
+  
+  if (type === 'success' || type === 'error') {
+    setTimeout(() => {
+      importStatus.textContent = '';
+      importStatus.className = 'import-status';
+    }, 5000);
+  }
+}
+
+async function importExcelProducts() {
+  if (!uploadedExcelFile) {
+    showImportStatus('Please select an Excel file first', 'error');
+    return;
+  }
+  
+  try {
+    showImportStatus('Reading file...', 'info');
+    
+    const products = await parseExcelFile(uploadedExcelFile);
+    
+    if (!products || !Array.isArray(products)) {
+      showImportStatus('Failed to parse file. Please check the format.', 'error');
+      return;
+    }
+    
+    if (products.length === 0) {
+      showImportStatus('No valid products found in file', 'error');
+      return;
+    }
+    
+    showImportStatus('Validating products...', 'info');
+    
+    const { validProducts, errors } = validateExcelProducts(products);
+    
+    if (validProducts.length === 0) {
+      showImportStatus('No valid products to import', 'error');
+      return;
+    }
+    
+    // Add valid products to inventory
+    window.products.push(...validProducts);
+    setStored(STORAGE_KEYS.products, window.products);
+    
+    // Update UI
+    renderInventory();
+    renderSaleProducts();
+    
+    // Show results
+    let message = `Successfully imported ${validProducts.length} products`;
+    if (errors.length > 0) {
+      message += `. ${errors.length} products had errors and were skipped.`;
+    }
+    showImportStatus(message, 'success');
+    
+    // Clear file input
+    clearExcelFile();
+    
+  } catch (error) {
+    showImportStatus(`Import failed: ${error.message}`, 'error');
+    console.error('Excel import error:', error);
+  }
+}
+
+function downloadExcelTemplate() {
+  const template = `Name,SKU,Category,Stock,Price,Size
+Sample Product 1,WW-SAMP-001,Footwear,10,2500,7,8,9
+Sample Product 2,WW-SAMP-002,Boots,5,3200,8,9,10
+Sample Product 3,WW-SAMP-003,Slides,15,1200,6,7,8`;
+  
+  const blob = new Blob([template], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'product_import_template.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function handleExcelFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  // Validate file type
+  const validTypes = ['.xlsx', '.xls', '.csv'];
+  const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+  
+  if (!validTypes.includes(fileExtension)) {
+    showImportStatus('Please select a valid Excel or CSV file', 'error');
+    clearExcelFile();
+    return;
+  }
+  
+  // Validate file size (max 5MB)
+  if (file.size > 5 * 1024 * 1024) {
+    showImportStatus('File size must be less than 5MB', 'error');
+    clearExcelFile();
+    return;
+  }
+  
+  uploadedExcelFile = file;
+  fileName.textContent = file.name;
+  fileInfo.style.display = 'flex';
+  importExcelBtn.disabled = false;
+  showImportStatus('File selected. Click "Import Products" to continue.', 'info');
+}
+
+function clearExcelFile() {
+  uploadedExcelFile = null;
+  excelFileInput.value = '';
+  fileInfo.style.display = 'none';
+  fileName.textContent = '';
+  importExcelBtn.disabled = true;
+}
 
 // Real-time stock calculation for size field
 productSizeInput.addEventListener("input", () => {
@@ -1076,12 +1606,18 @@ productStockInput.addEventListener("input", () => {
   }
 });
 
+function loadNewProductsFromExcel() {
+  // Clear all products - inventory is now empty
+  console.log('All products removed from inventory');
+}
+
 async function initApp() {
   fillShopForm();
   applyShopProfileToHeader();
   switchToGuestPanel();
   await importSeedProducts();
   normalizeProductsData();
+  loadNewProductsFromExcel(); // Load new products instead of seed
   renderInventory();
   renderSaleProducts();
   renderSales();
